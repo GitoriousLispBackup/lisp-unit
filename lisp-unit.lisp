@@ -29,21 +29,49 @@
 
 (defpackage :lisp-unit
   (:use :common-lisp)
-  (:export #:define-test #:run-all-tests #:run-tests
-           #:assert-eq #:assert-eql #:assert-equal #:assert-equalp
-           #:assert-error #:assert-expands #:assert-false 
-           #:assert-equality #:assert-prints #:assert-true
+  (:export #:define-test
+           #:run-all-tests
+           #:run-tests
+           #:assert-eq
+           #:assert-eql
+           #:assert-equal
+           #:assert-equalp
+           #:assert-error
+           #:assert-expands
+           #:assert-false 
+           #:assert-equality
+           #:assert-prints
+           #:assert-true
            #:fail
-           #:get-test-code #:get-tests
-           #:remove-all-tests #:remove-tests
-           #:logically-equal #:set-equal #:unordered-equal
+           #:get-test-code
+           #:get-tests
+           #:remove-all-tests
+           #:remove-tests
+           #:logically-equal
+           #:set-equal
+           #:unordered-equal
            #:use-debugger
+           #:with-listeners
            #:with-test-listener
-           #:*test-listener*))
+           #:*test-listener*
+           #:*summary-listener*
+           #:*error-listener*
+           #:show-failure-result
+           #:show-no-result
+           #:show-summary
+           #:show-package-summary
+           #:show-no-summary
+           #:show-error
+           #:count-error))
 
 (in-package :lisp-unit)
 
 (pushnew :lisp-unit *features*)
+
+#+sbcl
+(declaim ;; Avoid style warnings from the SBCL compiler when compiling the
+         ;; code of the test function.
+         (sb-ext:muffle-conditions style-warning))
 
 ;;; ----------------------------------------------------------------------------
 ;;;
@@ -60,9 +88,6 @@
    If :ask, user is given option of entering debugger or not.
    If true and not :ask, debugger is entered.")
 
-(defparameter *test-listener* nil
-  "Stores a function to rebind the test listener.")
-
 (defvar *test-count* 0
   "Used by RUN-TESTS to collect summary statistics.")
 
@@ -71,6 +96,21 @@
 
 (defvar *test-name* nil
  "Set by RUN-TESTS for use by SHOW-FAILURE")
+
+;; Exported global variables
+
+(defparameter *test-listener* nil
+  "Stores a function to rebind the test listener.
+   @see{with-listeners}
+   @see{with-test-listener}")
+
+(defparameter *summary-listener* nil
+  "Stores a function to rebind the summary listener.
+   @see{with-listeners}")
+
+(defparameter *error-listener* nil
+  "Stores a function to rebind the error listener.
+   @see{with-listeners}")
 
 ;;; ----------------------------------------------------------------------------
 ;;;
@@ -91,12 +131,14 @@
 ;; DEFINE-TEST
 
 (defmacro define-test (name &body body)
-  "@arg[name]{The name of the test.}
-   @arg[body]{The code to be executed.}
-   This macro defines a test called @code{name} with the expressions specified,
-   in the package specified by the value of @code{*package*} in effect when
-   @code{define-test} is executed. The expresssions are assembled into runnable
-   code whenever needed by @code{run-tests}. Hence you can define or redefine
+  "@arg[name]{a symbol}
+   @arg[body]{the forms to be evaluated}
+   @short{This macro defines a test called @code{name} with the expressions
+     specified in @code{body}, in the package specified by the value of
+     @code{*package*} in effect when @code{define-test} is executed.}
+
+   The expresssions are assembled into runnable code whenever needed by
+   @fun{run-tests} or @fun{run-all-tests}. Hence you can define or redefine
    macros without reloading tests using those macros."
   `(progn
      (store-test-code ',name ',body)
@@ -134,18 +176,17 @@
   "@arg[expected]{the expected value}
    @arg[form]{an expression}
    @arg[extras]{to be printed if the test fails}
-   @short{Assertion with the predicate @code{eq}}
+   @return{Return value is unspecified.}
+   @short{Assertion with the predicate @code{eq}.}
 
    All of the assertion forms are macros. They tally a failure if the associated
    predication returns false. Assertions can be made about return values,
    printed output, macro expansions, and even expected errors. Assertion form
    arguments are evaluated in the local lexical environment.
 
-   All assertion forms allow to include additional expressions at the end of
-   the form. These expressions and their values will be printed only when the
-   test fails.
-
-   Return values are unspecified for all assertion forms.
+   All assertion forms allow to include additional expressions @code{extras} at
+   the end of the form. These expressions and their values will be printed only
+   when the test fails.
    @see{assert-eql}
    @see{assert-equal}
    @see{assert-equalp}
@@ -161,6 +202,7 @@
   "@arg[expected]{the expected value}
    @arg[form]{an expression}
    @arg[extras]{to be printed if the test fails}
+   @return{Return value is unspecified.}
    @short{Assertion with the predicate @code{eql}}
 
    See @fun{assert-eq} for a detailed description.
@@ -178,6 +220,7 @@
   "@arg[expected]{the expected value}
    @arg[form]{an expression}
    @arg[extras]{to be printed if the test fails}
+   @return{Return value is unspecified.}
    @short{Assertion with the predicate @code{equal}}
 
    See @fun{assert-eq} for a detailed description.
@@ -195,6 +238,7 @@
   "@arg[expected]{the expected value}
    @arg[form]{an expression}
    @arg[extras]{to be printed if the test fails}
+   @return{Return value is unspecified.}
    @short{Assertion with the predicate @code{equalp}}
 
    See @fun{assert-eq} for a detailed description.
@@ -213,6 +257,7 @@
    @arg[expected]{the expected value}
    @arg[form]{an test form}
    @arg[extras]{to be printed if the test fails}
+   @return{Return value is unspecified.}
    @short{Assertion with a user defined predicate.}
 
    These macros tally a failure if the value @code{expected} is not equal to the
@@ -222,8 +267,8 @@
    In general, @fun{assert-equal} is used for most tests. But any binary
    predicate can be used, with @code{assert-equality}, e.g.,
    @begin{pre}
-   (assert-equality #'unordered-equal 
-                    '(a b c) (unique-atoms '((b c) a ((b a) c))))
+  (assert-equality #'unordered-equal 
+                   '(a b c) (unique-atoms '((b c) a ((b a) c))))
    @end{pre}
    Besides the predicate @fun{unordered-equal}, the predicates @fun{set-equal}
    and @fun{logically-equal} might be useful.
@@ -241,7 +286,9 @@
 (defmacro assert-true (form &rest extras)
   "@arg[form]{an test form}
    @arg[extras]{to be printed if the test fails}
-   @code{assert-true} tallies a failure if the test form returns false.
+   @return{Return value is unspecified.}
+   @short{@code{assert-true} tallies a failure if the test form returns false.}
+
    See @fun{assert-eq} for a detailed description of assert macros.
    @see{assert-eql}
    @see{assert-equalp}
@@ -253,9 +300,11 @@
   (expand-assert :result form form t extras))
 
 (defmacro assert-false (form &rest extras)
-  "@arg[form]{an test form}
+  "@arg[form]{a test form}
    @arg[extras]{to be printed if the test fails}
-   @code{assert-false} tallies a failure if the test returns true.
+   @return{Return value is unspecified.}
+   @short{@code{assert-false} tallies a failure if the test returns true.}
+
    See @fun{assert-eq} for a detailed description of assert macros.
    @see{assert-eql}
    @see{assert-equalp}
@@ -267,16 +316,24 @@
   (expand-assert :result form form nil extras))
 
 (defmacro assert-error (condition form &rest extras)
-  "This macro tallies a failure if @code{form} does not signal an error that is
-   equal to or a subtype of condition-type. Use error to refer to any kind of
-   error. See condition types in the Common Lisp Hyperspec for other possible
-   names. For example,
-   @begin{pre}
-   (assert-error 'arithmetic-error (foo 0))
-   @end{pre}
-   would assert that @code{foo} is supposed to signal an arithmetic error when
-   passed zero.
+  "@arg[condition]{an error condition}
+   @arg[form]{a test form}
+   @arg[extras]{to be printed if the test fails}
+   @return{Return value is unspecified.}
+   @short{This macro tallies a failure if @code{form} does not signal an error
+     that is equal to or a subtype of condition-type @code{condition}.}
+
+   Use @code{error} to refer to any kind of error. See condition types in the
+   Common Lisp Hyperspec for other possible names.
+
    See @fun{assert-eq} for a detailed description of assert macros.
+
+   @b{Example}@break{}
+   This example asserts that @code{foo} is supposed to signal an arithmetic
+   error when passed zero.
+   @begin{pre}
+  (assert-error 'arithmetic-error (foo 0))
+   @end{pre}
    @see{assert-eql}
    @see{assert-equalp}
    @see{assert-equality}
@@ -287,14 +344,41 @@
   (expand-assert :error form (expand-error-form form) condition extras))
 
 (defmacro assert-prints (output form &rest extras)
-  "This macro tallies a failure if form does not print to standard output stream
-   output equal to the given string, ignoring differences in beginning and
-   ending newlines."
+  "@arg[condition]{an error condition}
+   @arg[form]{a test form}
+   @arg[extras]{to be printed if the test fails}
+   @return{Return value is unspecified.}
+   @short{This macro tallies a failure if @code{form} does not print to standard
+     output stream output equal to the given string @code{output}, ignoring
+     differences in beginning and ending newlines.}
+
+   See @fun{assert-eq} for a detailed description of assert macros.
+   @see{assert-eql}
+   @see{assert-equalp}
+   @see{assert-equality}
+   @see{assert-true}
+   @see{assert-false}
+   @see{assert-error}
+   @see{assert-expands}"
   (expand-assert :output form (expand-output-form form) output extras))
 
 (defmacro assert-expands (&environment env expansion form &rest extras)
-  "This macro tallies a failure if (macroexpand-1 form) does not produce a value
-   equal to expansion."
+  "@arg[env]{}
+   @arg[expansion]{}
+   @arg[form]{}
+   @arg[extras]{}
+   @return{Return value is unspecified.}
+   @short{This macro tallies a failure if @code{(macroexpand-1 form)} does not
+     produce a value equal to @code{expansion}.}
+
+   See @fun{assert-eq} for a detailed description of assert macros.
+   @see{assert-eql}
+   @see{assert-equalp}
+   @see{assert-equality}
+   @see{assert-true}
+   @see{assert-false}
+   @see{assert-error}
+   @see{assert-print}"
   (expand-assert :macro
                  form
                  (expand-macro-form form #+lispworks nil #-lispworks env)
@@ -310,10 +394,11 @@
 
    Calling this function tallies a failure. A string describing the failure is
    constructed by calling @code{(format nil format-string [form1 form2 ...])}.
-   For example,
+   
+   @b{Example}
    @begin{pre}
-    (when (> (length queue) 100)
-      (fail ''Queue exceeded expected size by '' (- (length queue) 100)))
+  (when (> (length queue) 100)
+    (fail ''Queue exceeded expected size by '' (- (length queue) 100)))
    @end{pre}"
   (signal 'test-failure :message (apply #'format nil str args)))
 
@@ -387,7 +472,36 @@
   (setf (gethash name (get-package-table package :create t))
         code))
 
-;; OUTPUT support
+;;; ----------------------------------------------------------------------------
+;;;
+;;; OUTPUT support
+;;;
+;;; ----------------------------------------------------------------------------
+
+;; Test Listeners
+
+(defun show-failure-result
+    (passed type name form expected actual extras test-count pass-count)
+  "The default test-listener, only prints when an assertion fails. It prints the
+   form, expected and actual values, and the values of any extra forms."
+  (declare (ignore test-count pass-count))
+  (unless passed
+    (show-failure type
+                  (get-failure-message type)
+                  name
+                  form
+                  expected
+                  actual
+                  extras)))
+
+(defun show-no-result
+    (passed type name form expected actual extras test-count pass-count)
+  "This function can be used with the macro @code{with-listener} to rebind the
+   variable @code{*test-listener*}. @code{show-no-result} never prints
+   anything."
+  (declare
+    (ignore passed type name form expected actual extras test-count pass-count))
+nil)
 
 (defun get-failure-message (type)
   (case type
@@ -404,8 +518,45 @@
   type)
 
 (defun show-summary (name test-count pass-count &optional error-count)
+  "@arg[name]{a symbol}
+   @arg[test-count]{a number}
+   @arg[pass-count]{a number}
+   @arg[error-count]{a number}
+   @short{The default test listener which prints the summaries at both the test
+     and package level.}
+   
+   @code{name} ist a test or a package just finished. The other arguments
+   @code{test-count}, @code{pass-count}, and @code{error-count} count the number
+   of assertions evaluated, the tests that passed, and the errors that
+   occured respectively"
   (format t "~&~A: ~S assertions passed, ~S failed~@[, ~S execution errors~]."
           name pass-count (- test-count pass-count) error-count))
+
+(defun show-package-summary (name test-count pass-count &optional error-count)
+  "@arg[name]{a symbol}
+   @arg[test-count]{a number}
+   @arg[pass-count]{a number}
+   @arg[error-count]{a number}
+   @short{A test listener which prints the summaries at only the package level.}
+
+   @code{name} ist a test or a package just finished. The other arguments
+   @code{test-count}, @code{pass-count}, and @code{error-count} count the number
+   of assertions evaluated, the tests that passed, and the errors that
+   occured respectively"
+  (when (eq name 'total)
+    (format t "~&~A: ~S assertions passed, ~S failed~@[, ~S execution errors~]."
+            name pass-count (- test-count pass-count) error-count)))
+
+(defun show-no-summary (name test-count pass-count &optional error-count)
+  "@arg[name]{a symbol}
+   @arg[test-count]{a number}
+   @arg[pass-count]{a number}
+   @arg[error-count]{a number}
+   @short{A test listener which never prints summaries.}
+
+   All passed arguments are ignored by @code{show-no-summary}"
+  (declare (ignore name test-count pass-count error-count))
+  nil)
 
 (defun collect-form-values (form values)
   (mapcan #'(lambda (form-arg value)
@@ -418,12 +569,13 @@
 ;; ASSERTION support
 
 (defun record-result (passed type form expected actual extras)
-  (funcall (or *test-listener* 'default-listener)
+  (funcall (or *test-listener* 'show-failure-result)
            passed
            type
            *test-name*
-           form expected
-           actual 
+           form
+           expected
+           actual
            (and extras (funcall extras))
            *test-count*
            *pass-count*))
@@ -460,24 +612,12 @@
           (check-results type form expected actual extras test))
       (test-failure (tf)
                     (record-result nil
-                                   :failure 
-                                   form 
+                                   :failure
+                                   form
                                    expected
                                    (test-failure-message tf)
                                    extras)
                     nil))))
-
-(defun default-listener
-    (passed type name form expected actual extras test-count pass-count)
-  (declare (ignore test-count pass-count))
-  (unless passed
-    (show-failure type
-                  (get-failure-message type)
-                  name
-                  form
-                  expected
-                  actual
-                  extras)))
 
 ;; RUN-TESTS support
 
@@ -485,6 +625,30 @@
   (and *use-debugger*
        (or (not (eql *use-debugger* :ask))
            (y-or-n-p "~A -- debug?" e))))
+
+(defun show-error (test-name e)
+  "@arg[test-name]{a symbol}
+   @arg[e]{an error object}
+   @short{The default error listener which prints the error message.}
+
+   Further execution of the test forms is terminated. @code{test-name} is the
+   name of the test which causes the error. @code{e} is the error object.
+   @see{count-error}
+   @see{with-listeners}"
+  (let ((*print-escape* nil))
+    (format t "~&Execution error in ~S: ~W" test-name e)))
+
+(defun count-error (test-name e)
+  "@arg[test-name]{a symbol}
+   @arg[e]{an error object}
+   @short{Prints nothing but the error count is incremented.}
+
+   Further execution of the test forms is terminated. @code{test-name} is the
+   name of the test which causes the error. @code{e} is the error object.
+   @see{show-error}
+   @see{with-listeners}"
+  (declare (ignore test-name e))
+  nil)
 
 (defun run-test-thunk (*test-name* thunk)
   (if (null thunk)
@@ -494,12 +658,13 @@
            (error-count 0))
       (handler-bind 
           ((error #'(lambda (e)
-                      (let ((*print-escape* nil))
-                        (setq error-count 1)
-                        (format t "~&    ~S: ~W" *test-name* e))
+                      (setq error-count 1)
+                      (funcall (or *error-listener* 'show-error)
+                               *test-name* e)
                       (if (use-debugger-p e) e (go exit)))))
         (funcall thunk)
-        (show-summary *test-name* *test-count* *pass-count*))
+        (funcall (or *summary-listener* 'show-summary)
+                 *test-name* *test-count* *pass-count*))
   exit
       (return (values *test-count* *pass-count* error-count)))))
 
@@ -515,10 +680,11 @@
           (incf total-pass-count pass-count)
           (incf total-error-count error-count)))
       (unless (null (cdr test-thunks))
-        (show-summary 'total
-                      total-test-count
-                      total-pass-count
-                      total-error-count))
+        (funcall (or *summary-listener* 'show-summary)
+                 'total
+                 total-test-count
+                 total-pass-count
+                 total-error-count))
       (values))))
 
 ;;; ----------------------------------------------------------------------------
@@ -529,14 +695,14 @@
 
 (defun get-test-code (name &optional (package *package*))
   "This function returns the body of the code stored for the test name under
-   package. If no package is given, the value of *package* is used."
+   package. If no package is given, the value of @code{*package*} is used."
   (let ((table (get-package-table package)))
     (unless (null table)
       (gethash name table))))
 
 (defun get-tests (&optional (package *package*))
   "This function returns the names of all the tests that have been defined for
-   the package. If no package is given, the value of *package* is used."
+   the package. If no package is given, the value of @code{*package*} is used."
   (let ((l nil)
         (table (get-package-table package)))
     (cond ((null table) nil)
@@ -604,8 +770,25 @@
 
 ;; WITH-TEST-LISTENER
 
-(defmacro with-test-listener (listener &body body)
-  "Rebind listeners to use user-defined listeners."
+(defmacro with-test-listener ((listener) &body body)
+  "Rebind the test listener to use a user-defined listener."
   `(let ((*test-listener* #',listener)) ,@body))
-  
+
+(defmacro with-listeners ((test-listener summary-listener error-listener)
+                          &body body)
+  "@arg[test-listener]{a symbol which names a function}
+   @arg[summary-listener]{a symbol which names a function}
+   @arg[error-listener]{a symbol which names a function}
+   @arg[body]{a list of forms}
+   @short{Rebind the listeners to use user-definied listeners.}
+
+   @code{with-listeners} rebinds the global variables
+   @variable{*test-listener*}, @variable{*summary-listener*}, and
+   @variable{*error-listener*}.
+   @see{with-test-listener}"
+  `(let ((*test-listener* #',test-listener)
+         (*summary-listener* #',summary-listener)
+         (*error-listener* #',error-listener))
+     ,@body))
+
 ;;; --- End of file lisp-unit.lisp ---------------------------------------------

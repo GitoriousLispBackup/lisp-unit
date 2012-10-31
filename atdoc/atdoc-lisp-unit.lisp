@@ -32,6 +32,33 @@
   testers.  More recent packages in Lisp and other languages have been inspired
   by JUnit for Java.  For more information on both unit testing and JUnit,
   visit @a[http://www.junit.org]{JUnit.org}.
+  @begin[General]{section}
+    @b{Author}@break{}
+    Copyright (c) 2004-2005 Christopher K. Riesbeck@br{}
+    Copyright (c) 2012 Dieter Kaiser
+  
+    @b{Version}@break{}
+    This is the documenation of a fork of the package @em{lisp-unit}.
+
+    @b{Homepage}@break{}
+    @a[http://www.cs.northwestern.edu/academics/courses/325/readings/lisp-unit.html]{http://www.cs.northwestern.edu/academics/courses/325/readings/lisp-unit.html}
+
+    @b{Mailing List}@break{}
+    No mailing list.
+
+    @b{Download and Source Code}@break{}
+    The original code is available at@br{}
+    @a[http://www.cs.northwestern.edu/academics/courses/325/programs/lisp-unit.lisp]{http://www.cs.northwestern.edu/academics/courses/325/programs/lisp-unit.lisp}
+
+    You can download a fork of @em{lisp-unit} from the repository
+    @a[http://gitorious.org/lisp-projects/lisp-unit]{gitorious.org/lisp-projects/lisp-unit}
+    The fork contains this documentation. Furthermore, the facilities to control
+    how results are reported are fully implemented.
+
+    @b{Dependencies}@break{}
+    @em{lisp-unit} does not depend on other libraries.
+  @end{section}
+
   @begin[Overview]{section}
     The main goal for @em{lisp-unit} is to make it simple to use.  The
     advantages of @em{lisp-unit} are:
@@ -43,7 +70,8 @@
       @item{supports test-first programming,}
       @item{supports testing return values, printed output, macro expansions,
         and error conditions,}
-      @item{produces short readable output with a reasonable level of detail, and}
+      @item{produces short readable output with a reasonable level of detail,
+        and}
       @item{groups tests by package for modularity.}
     @end{itemize}
   @end{section}
@@ -305,12 +333,12 @@
       @item{the truth or falsity of the assertion}
       @item{a keyword for type of assertion; current valid values for type are:
         @begin{table}
-          @entry[:ERROR]{for ASSERT-ERROR}
-          @entry[:MACRO]{for ASSERT-EXPANDS}
-          @entry[:OUTPUT]{for ASSERT-PRINTS}
-          @entry[:RESULT]{for ASSERT-TRUE, ASSERT-FALSE}
-          @entry[:FAILURE]{for FAIL calls}
-          @entry[:EQUAL]{for all other assertions}
+          @entry[:error]{for @code{assert-error}}
+          @entry[:macro]{for @code{assert-expands}}
+          @entry[:output]{for @code{assert-prints}}
+          @entry[:result]{for @code{assert-true}, @code{assert-false}}
+          @entry[:failure]{for @code{fail} calls}
+          @entry[:equal]{for all other assertions}
         @end{table}}
       @item{the name of test in which assertion occurred}
       @item{the form tested}
@@ -322,26 +350,24 @@
     @end{itemize}
     Two test listener functions are exported:
     @begin{table}
-      @entry[SHOW-FAILURE-RESULT]{the default, only prints when an assertion
+      @entry[show-failure-result]{the default, only prints when an assertion
         fails. It prints the form, expected and actual values, and the values of
         any extra forms.}
-      @entry[SHOW-NO-RESULT]{never prints anything.}
+      @entry[show-no-result]{never prints anything.}
     @end{table}
     @b{Error Listener}@break{}
     The error listener is called when an error occurs in running a test. The
     listener is passed
     @begin{itemize}
-      @item{the error object}
       @item{the name of the test}
+      @item{the error object}
     @end{itemize}
-    Three error listener functions are exported:
+    Two error listener functions are exported:
     @begin{table}
-      @entry[SHOW-ERROR]{the default, prints the error message. Further
-        execution of the test's forms is terminated.}
-      @entry[COUNT-ERROR]{prints nothing but the error count is incremented.
-        Further execution of the test's forms is terminated.}
-      @entry[DEBUG-ERROR]{causes the Lisp debugger to be invoked so that the
-        stack can be examined.}
+      @entry[show-error]{the default, prints the error message. Further
+        execution of the test forms is terminated.}
+      @entry[count-error]{prints nothing but the error count is incremented.
+        Further execution of the test forms is terminated.}
     @end{table}
     @b{Summary Listener}@break{}
     The summary listener is called after
@@ -354,22 +380,22 @@
     @begin{itemize}
       @item{the name of the test or a package just finished}
       @item{the number of assertions evaluated}
-      @item{the number that passed}
+      @item{the number of tests that passed}
       @item{the number of errors that occurred}
     @end{itemize}
     Three summary listener functions are exported:
     @begin{table}
-      @entry[SHOW-SUMMARY]{the default, prints the summaries at both the test
+      @entry[show-summary]{the default, prints the summaries at both the test
         and package level.}
-      @entry[SHOW-PACKAGE-SUMMARY]{prints the summaries at only the package
+      @entry[show-package-summary]{prints the summaries at only the package
         level.}
-      @entry[SHOW-NO-SUMMARY]{never prints summaries.}
+      @entry[show-now-summary]{never prints summaries.}
     @end{table}
     @b{Rebinding Listeners}@break{}
     The three listeners are stored in the exported global variables
-    *test-listener*, *error-listener*, *summary-listener*. So one way to change
-    listeners is with let. For example, to show only package-level summary
-    counts:
+    @code{*test-listener*}, @code{*error-listener*}, @code{*summary-listener*}.
+    So one way to change listeners is with @code{let}. For example, to show only
+    package-level summary counts:
     @begin{pre}
   (let ((*summary-listener* 'show-package-summary))
     (run-tests))
@@ -395,22 +421,16 @@
     (run-tests))
     @end{pre}
     @b{with-listeners}@break{}
-    A simpler way to rebind listeners is with with-listeners. The second example
-    above could be done with:
+    A simpler way to rebind listeners is with @code{with-listeners}. The
+    example above could be done with:
     @begin{pre}
-  (with-listeners (count-error show-package-summary show-no-result)
+  (with-listeners (show-no-result show-failing-package count-error)
     (run-tests))
     @end{pre}
-    To use user-defined listeners, you first say what listener variable they're
-     for with set-listener-variable. The third example above could be done with:
+    The macro @code{with-test-listener} can be used to rebind only the
+    test listener.
     @begin{pre}
-  (defun show-failing-package (name test-count pass-count error-count)
-    (when (or (< pass-count test-count) (> error-count 0))
-      (show-summary name test-count pass-count error-count)))
-
-  (set-listener-variable 'show-failing-package '*summary-listener*)
-
-  (with-listeners (count-error show-failing-package show-no-result)
+  (with-test-listener (show-no-result)
     (run-tests))
     @end{pre}
   @end{section}
