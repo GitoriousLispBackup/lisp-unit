@@ -47,7 +47,7 @@
       :logo nil
       :single-page-p nil
       :include-slot-definitions-p t
-      :include-internal-symbols-p t)))
+      :include-internal-symbols-p nil)))
 
 (defun generate-html-single-page ()
   (let* ((base (asdf:component-pathname (asdf:find-system :lisp-unit)))
@@ -62,7 +62,7 @@
       :logo nil
       :single-page-p t
       :include-slot-definitions-p t
-      :include-internal-symbols-p t)))
+      :include-internal-symbols-p nil)))
 
 (generate-html)
 
